@@ -5,11 +5,20 @@ phases:
     commands:
       - echo Logging in to Amazon ECR...
       - aws --version
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $REPOSITORY_URI
+
+      # extract registry hostname (everything before first "/")
+      - REPOSITORY_REGISTRY=$(echo $REPOSITORY_URI | cut -d'/' -f1)
+      - echo "Using registry: $REPOSITORY_REGISTRY"
+
+      # login to registry
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $REPOSITORY_REGISTRY
+
   build:
     commands:
       - echo Build started on `date`
+      - echo Navigating to SP-API MCP sample...
       - cd use-cases/sp-api-mcp-server
+
       - echo Creating Dockerfile...
       - |
         cat << 'EOF' > Dockerfile
@@ -20,11 +29,13 @@ phases:
         COPY . .
         CMD ["npm", "start"]
         EOF
-      - echo Building the Docker image...
+
+      - echo Building Docker image...
       - docker build -t $REPOSITORY_URI:latest .
+
   post_build:
     commands:
-      - echo Pushing the Docker image...
+      - echo Pushing Docker image to ECR...
       - docker push $REPOSITORY_URI:latest
       - echo Build completed on `date`
 

@@ -20,15 +20,12 @@ phases:
       - cd use-cases/sp-api-mcp-server
 
       - echo Creating Dockerfile...
-      - |
-        cat << 'EOF' > Dockerfile
-        FROM node:20-alpine
-        WORKDIR /app
-        COPY package*.json ./
-        RUN npm install --only=production
-        COPY . .
-        CMD ["npm", "start"]
-        EOF
+      - echo 'FROM node:20-alpine' > Dockerfile
+      - echo 'WORKDIR /app' >> Dockerfile
+      - echo 'COPY package*.json ./' >> Dockerfile
+      - echo 'RUN npm install --only=production' >> Dockerfile
+      - echo 'COPY . .' >> Dockerfile
+      - echo 'CMD ["npm", "start"]' >> Dockerfile
 
       - echo Building Docker image...
       - docker build -t $REPOSITORY_URI:latest .

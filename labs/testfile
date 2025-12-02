@@ -11,24 +11,26 @@ phases:
       - echo Build started on `date`
       - cd use-cases/sp-api-mcp-server
       
-      # 1. Install ALL dependencies for the CodeBuild environment
+      # 1. Install ALL dependencies for the CodeBuild environment and compile
       - npm install
-      
-      # 2. CRITICAL: Compile TypeScript to JavaScript
       - echo "Compiling TypeScript to JavaScript (Outputting to './build')..."
       - npm run build
       
-      # 3. GENERATE A CLEAN, PRODUCTION-ONLY DOCKERFILE
-      # This fix simplifies the pathing inside the container.
+      # 2. GENERATE A CLEAN, PRODUCTION-ONLY DOCKERFILE
+      # This fix ensures all necessary files are copied to the root of /app
       - echo "FROM public.ecr.aws/docker/library/node:20-alpine" > Dockerfile
       - echo "WORKDIR /app" >> Dockerfile
+      
+      # Copy package files first
       - echo "COPY package*.json ./" >> Dockerfile
-      # Install only PRODUCTION dependencies, omitting dev dependencies
+      
+      # Install only PRODUCTION dependencies, and do it inside the container
       - echo "RUN npm install --omit=dev" >> Dockerfile
       
-      # 🚨 NEW: Copy the *CONTENTS* of the local 'build/' directory to the container's '/app' root.
-      - **echo "COPY build/ /app" >> Dockerfile** # 🚨 NEW: CMD now runs the file directly from the '/app' root.
-      - **echo 'CMD ["node", "index.js"]' >> Dockerfile**
+      # 🚨 FINAL FIX: Copy the *CONTENTS* of the local 'build/' directory to the container's '/app' root.
+      # This ensures 'index.js' and any compiled utilities are in the same place as node_modules.
+      - echo "COPY build/ /app" >> Dockerfile # The CMD runs the file directly from the '/app' root where node_modules is.
+      - echo 'CMD ["node", "index.js"]' >> Dockerfile
 
       - echo Building Docker image...
       - docker build -t $REPOSITORY_URI:latest .

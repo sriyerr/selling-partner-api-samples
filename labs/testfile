@@ -4,49 +4,37 @@ phases:
     commands:
       - echo Logging in to Amazon ECR...
       - aws --version
-      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $REPOSITORY_REGISTRY
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $REPOSITORY_REGISTRY
 
   build:
     commands:
       - echo Build started on `date`
       - cd use-cases/sp-api-mcp-server
       
-      # 1. Store the current working directory path for robust file copying
-      - EXPORT APP_PATH=$(pwd)
+      # 1. Capture the current absolute path for logging (using lowercase 'export')
+      - export APP_PATH=$(pwd)
       
-      # 2. Install ALL dependencies for the CodeBuild environment (Use 'npm ci' if package-lock.json exists)
+      # 2. Install ALL dependencies and compile the TypeScript
       - npm install
-      
-      # 3. CRITICAL: Compile TypeScript to JavaScript (must output to './build')
       - echo "Compiling TypeScript to JavaScript..."
       - npm run build
       
       # 🚨 DIAGNOSTIC LOGS: Check the output folder content and location 🚨
       - echo "--- Current Working Directory: $APP_PATH ---"
-      - pwd
-      - echo "--- Contents of the build directory (should show index.js): ---"
       - ls -R build
-      - echo "--- Files in the CodeBuild context (should show Dockerfile, package.json): ---"
-      - ls -a
       
-      # 4. GENERATE A CLEAN, PRODUCTION-ONLY DOCKERFILE
-      - echo "FROM public.ecr.aws/docker/library/node:20-alpine" > Dockerfile
-      - echo "WORKDIR /app" >> Dockerfile
+      # 3. CRITICAL FIX: GENERATE DOCKERFILE using single quotes for robustness
+      # ⚠️ This guarantees the Dockerfile is created.
+      - 'echo "FROM public.ecr.aws/docker/library/node:20-alpine" > Dockerfile'
+      - 'echo "WORKDIR /app" >> Dockerfile'
+      - 'echo "COPY package*.json ./" >> Dockerfile'
+      - 'echo "RUN npm install --omit=dev" >> Dockerfile'
+      - 'echo "COPY build/ /app" >> Dockerfile'
+      - 'echo "CMD ["node", "index.js"]" >> Dockerfile'
       
-      # Copy package files first
-      - echo "COPY package*.json ./" >> Dockerfile
-      
-      # Install only PRODUCTION dependencies in the container
-      - echo "RUN npm install --omit=dev" >> Dockerfile
-      
-      # 5. COPY FIX: Copy the COMPILED CONTENTS from the CodeBuild workspace to the container root
-      # This ensures index.js and node_modules are both in /app.
-      - echo "COPY build/ /app" >> Dockerfile
-      
-      # The CMD now runs the file directly from the '/app' root.
-      - echo 'CMD ["node", "index.js"]' >> Dockerfile
-
-      - echo Building Docker image...
+      # 4. Final check before docker build
+      - echo "--- Files in the CodeBuild context (Dockerfile MUST be listed): ---"
+      - **ls -a** - echo Building Docker image...
       - docker build -t $REPOSITORY_URI:latest .
 
   post_build:

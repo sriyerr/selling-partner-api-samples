@@ -1,65 +1,25 @@
-version: 0.2
-phases:
-  pre_build:
-    commands:
-      - echo Logging in to Amazon ECR...
-      - aws --version
-      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $REPOSITORY_REGISTRY
+import json
 
-  build:
-    commands:
-      - echo Build started on `date`
-      - cd use-cases/sp-api-mcp-server
-      
-      # 1. Capture path
-      - export APP_PATH=$(pwd)
-      
-      # 2. Clone and Prepare Environment
-      - echo "Cloning required API models repository..."
-      - cd .. # CRITICAL: Go up one directory (to the 'use-cases' folder)
-      - git clone https://github.com/amzn/selling-partner-api-models.git
-      - cd sp-api-mcp-server # Go back to the application directory
+def lambda_handler(event, context):
+    """
+    Placeholder for your B2B Pricing Agent.
+    For now, just echoes the message.
+    Later, we'll call Bedrock + MCP from here.
+    """
+    body = event.get("body")
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except json.JSONDecodeError:
+            body = {}
 
-      # 3. Install and Compile
-      - npm install
-      - echo "Compiling TypeScript to JavaScript..."
-      - npm run build
-      
-      # 4. GENERATE DOCKERFILE (using paths relative to the future build context: 'use-cases/')
-      # We put the Dockerfile in the current directory first, then move it.
-      - 'echo "FROM public.ecr.aws/docker/library/node:20-alpine" > Dockerfile'
-      - 'echo "WORKDIR /app" >> Dockerfile'
-      
-      # Use relative path from build context (use-cases/) to app's package files
-      - 'echo "COPY sp-api-mcp-server/package*.json /app/" >> Dockerfile'
-      - 'echo "RUN npm install --omit=dev" >> Dockerfile'
-      
-      # 🚨 FINAL COPY FIX: Paths are now relative to the parent directory (use-cases/)
-      - 'echo "COPY sp-api-mcp-server /app" >> Dockerfile'
-      - 'echo "COPY selling-partner-api-models /app/selling-partner-api-models" >> Dockerfile' # THIS WILL NOW WORK
-      
-      # 5. Final CMD
-      - 'echo "ENTRYPOINT [\"node\"]" >> Dockerfile'
-      - 'echo "CMD [\"build/index.js\"]" >> Dockerfile'
-      
-      # 6. CRITICAL FIX: Move Dockerfile and execute build from the correct context
-      - echo "Moving Dockerfile and changing context..."
-      - mv Dockerfile .. # Move Dockerfile up to the 'use-cases' folder
-      - cd .. # Change context to the 'use-cases' folder (the Docker build root)
+    user_message = body.get("message", "Hello from B2B agent")
 
-      - echo Building Docker image from new context...
-      # Build from the current directory (.), specifying the location of the Dockerfile (-f).
-      - docker build -t $REPOSITORY_URI:latest -f sp-api-mcp-server/Dockerfile .
-
-  post_build:
-    commands:
-      # Use a unique tag for reliable ECS deployments
-      - export IMAGE_TAG=$CODEBUILD_BUILD_NUMBER 
-      - echo Pushing Docker image to ECR with tag: $IMAGE_TAG
-      - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG
-      - docker push $REPOSITORY_URI:$IMAGE_TAG
-      - echo Build completed on `date`
-
-artifacts:
-  files:
-    - '**/*'
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({
+            "echo": user_message,
+            "info": "b2b-pricing-agent lambda is wired and ready for Bedrock integration"
+        })
+    }

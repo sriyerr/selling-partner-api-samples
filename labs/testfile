@@ -11,43 +11,48 @@ phases:
       - echo Build started on `date`
       - cd use-cases/sp-api-mcp-server
       
-      # 1. Capture the current absolute path for logging (using lowercase 'export')
+      # 1. Capture path
       - export APP_PATH=$(pwd)
       
-      # 2. Install ALL dependencies and compile the TypeScript
+      # 2. CRITICAL FIX: Clone the missing API model repository one level up
+      - echo "Cloning required API models repository..."
+      - cd .. # Go up one directory (to the 'use-cases' folder)
+      - git clone https://github.com/amzn/selling-partner-api-models.git
+      - cd sp-api-mcp-server # Go back to the application directory
+
+      # 3. Install and Compile
       - npm install
       - echo "Compiling TypeScript to JavaScript..."
       - npm run build
       
-      # 🚨 DIAGNOSTIC LOGS: Check the output folder content and location 🚨
-      - echo "--- Current Working Directory: $APP_PATH ---"
-      - ls -R build
+      # 4. Final log to confirm models directory exists before build
+      - echo "--- Checking for cloned API models path: ---"
+      - ls -d ../selling-partner-api-models/ 
       
-      # 3. CRITICAL FIX: GENERATE DOCKERFILE using single quotes for robustness
-      # ⚠️ This guarantees the Dockerfile is created and uses the robust ENTRYPOINT/CMD pattern.
+      # 5. GENERATE DOCKERFILE with the model files copy (using single quotes for YAML robustness)
       - 'echo "FROM public.ecr.aws/docker/library/node:20-alpine" > Dockerfile'
       - 'echo "WORKDIR /app" >> Dockerfile'
       - 'echo "COPY package*.json ./" >> Dockerfile'
       - 'echo "RUN npm install --omit=dev" >> Dockerfile'
       
-      # Copy the compiled 'build' directory and all other source files to /app
+      # 🚨 COPY FIX: Copy the app's contents and the external models into /app
       - 'echo "COPY . /app" >> Dockerfile'
+      - 'echo "COPY ../selling-partner-api-models /app/selling-partner-api-models" >> Dockerfile'
       
-      # 4. Final CMD fix for module resolution
-      # ENTRYPOINT sets the runtime to 'node', CMD sets the file path to the compiled JS.
+      # 6. Final ENTRYPOINT/CMD for correct execution of the compiled file
       - 'echo "ENTRYPOINT [\"node\"]" >> Dockerfile'
       - 'echo "CMD [\"build/index.js\"]" >> Dockerfile'
-      
-      # 5. Final check before docker build
-      - echo "--- Files in the CodeBuild context (Dockerfile MUST be listed): ---"
-      - ls -a
+
       - echo Building Docker image...
       - docker build -t $REPOSITORY_URI:latest .
 
   post_build:
     commands:
-      - echo Pushing Docker image to ECR...
-      - docker push $REPOSITORY_URI:latest
+      # Use a unique tag for reliable ECS deployments
+      - export IMAGE_TAG=$CODEBUILD_BUILD_NUMBER 
+      - echo Pushing Docker image to ECR with tag: $IMAGE_TAG
+      - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
       - echo Build completed on `date`
 
 artifacts:

@@ -1,14 +1,14 @@
 import json
+import os
+import boto3
+
+bedrock = boto3.client("bedrock-runtime")
+MODEL_ID = os.environ.get("BEDROCK_MODEL_ID")
 
 def lambda_handler(event, context):
-    # Make event always a dict
-    if event is None:
+    if not isinstance(event, dict):
         event = {}
 
-    # Body might be:
-    # - a JSON string
-    # - already a dict
-    # - None
     body = event.get("body", {})
     if isinstance(body, str):
         try:
@@ -16,13 +16,34 @@ def lambda_handler(event, context):
         except:
             body = {}
 
-    user_message = body.get("message", "Hello from B2B agent")
+    msg = body.get("message", "Hello from Amazon B2B agent")
+
+    payload = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 512,
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": msg}]
+            }
+        ]
+    }
+
+    resp = bedrock.invoke_model(
+        modelId=MODEL_ID,
+        body=json.dumps(payload)
+    )
+
+    data = json.loads(resp["body"].read())
+
+    reply = ""
+    if data.get("content") and data["content"][0].get("text"):
+        reply = data["content"][0]["text"]
 
     return {
         "statusCode": 200,
-        "headers": {"Content-Type": "application/json"},
         "body": json.dumps({
-            "echo": user_message,
-            "info": "b2b-pricing-agent lambda is wired and ready"
+            "input": msg,
+            "reply": reply
         })
     }

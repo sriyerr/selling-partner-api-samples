@@ -4,24 +4,32 @@ phases:
     commands:
       - echo Logging in to Amazon ECR...
       - aws --version
+
+      # Login to registry using your env variable
       - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $REPOSITORY_REGISTRY
+
   build:
     commands:
       - echo Build started on `date`
       - cd use-cases/sp-api-mcp-server
-      - echo "FROM node:20-alpine" > Dockerfile
+
+      # Generate Dockerfile that builds TS at container startup
+      - echo "FROM public.ecr.aws/docker/library/node:20-alpine" > Dockerfile
       - echo "WORKDIR /app" >> Dockerfile
       - echo "COPY package*.json ./" >> Dockerfile
       - echo "RUN npm install" >> Dockerfile
       - echo "COPY . ." >> Dockerfile
-      - echo "RUN npm run build" >> Dockerfile
-      - echo 'CMD ["npm", "start"]' >> Dockerfile
+      - echo 'CMD ["sh", "-c", "npm run build && npm start"]' >> Dockerfile
+
       - echo Building Docker image...
       - docker build -t $REPOSITORY_URI:latest .
+
   post_build:
     commands:
       - echo Pushing Docker image to ECR...
       - docker push $REPOSITORY_URI:latest
+      - echo Build completed on `date`
+
 artifacts:
   files:
     - '**/*'

@@ -47,7 +47,23 @@ def lambda_handler(event, context):
             "reply": reply
         })
     }
-bash <(curl -s https://raw.githubusercontent.com/aws-containers/amazon-ecs-exec-checker/main/check-ecs-exec.sh) \
-<Your-Cluster-Name> \
-arn:aws:ecs:<Your-Region>:<Your-Account-ID>:task/<Your-Cluster-Name>/<Your-Task-ID> \
---region <Your-Region>
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ssmmessages:CreateControlChannel",
+                "ssmmessages:CreateDataChannel",
+                "ssmmessages:OpenControlChannel",
+                "ssmmessages:OpenDataChannel"
+            ],
+            "Resource": "*" 
+        },
+        {
+            "Effect": "Allow",
+            "Action": "ecs:ExecuteCommand",
+            "Resource": "arn:aws:ecs:<Your-Region>:<Your-Account-ID>:task/<Your-Cluster-Name>/*"
+        }
+    ]
+}

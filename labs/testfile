@@ -4,20 +4,30 @@ phases:
     commands:
       - echo Logging in to Amazon ECR...
       - aws --version
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $REPOSITORY_REGISTRY
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $REPOSITORY_REGISTRY
 
   build:
     commands:
       - echo Build started on `date`
       - cd use-cases/sp-api-mcp-server
 
-      # Generate Dockerfile that builds TS during docker build
+      # 1. Install ALL dependencies (including devDependencies like typescript)
+      # This step is essential for 'npm run build' to work.
+      - **npm install** # 2. **CRITICAL FIX: Compile TypeScript to JavaScript**
+      # This runs the compilation, creating the production JS files (e.g., in the 'build' directory).
+      - echo "Compiling TypeScript to JavaScript..."
+      - **npm run build**
+      
+      # 3. **GENERATE A CLEAN, PRODUCTION-ONLY DOCKERFILE**
+      # This Dockerfile will be simple because the compilation is already done.
       - echo "FROM public.ecr.aws/docker/library/node:20-alpine" > Dockerfile
       - echo "WORKDIR /app" >> Dockerfile
       - echo "COPY package*.json ./" >> Dockerfile
-      - echo "RUN npm install" >> Dockerfile
-      - echo "COPY . ." >> Dockerfile
-      - echo "RUN npm run build" >> Dockerfile
+      # Only install PRODUCTION dependencies for the final image size and stability.
+      - echo "RUN npm install --omit=dev" >> Dockerfile
+      # Copy the pre-compiled JS output directory ('build')
+      - echo "COPY build/ ./build/" >> Dockerfile 
+      # **The CMD now runs the compiled index.js file directly with 'node'.**
       - echo 'CMD ["node", "build/index.js"]' >> Dockerfile
 
       - echo Building Docker image...

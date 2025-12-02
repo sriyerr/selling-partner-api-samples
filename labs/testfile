@@ -1,16 +1,19 @@
 import json
 
 def lambda_handler(event, context):
-    """
-    Placeholder for your B2B Pricing Agent.
-    For now, just echoes the message.
-    Later, we'll call Bedrock + MCP from here.
-    """
-    body = event.get("body")
+    # Make event always a dict
+    if event is None:
+        event = {}
+
+    # Body might be:
+    # - a JSON string
+    # - already a dict
+    # - None
+    body = event.get("body", {})
     if isinstance(body, str):
         try:
             body = json.loads(body)
-        except json.JSONDecodeError:
+        except:
             body = {}
 
     user_message = body.get("message", "Hello from B2B agent")
@@ -20,6 +23,6 @@ def lambda_handler(event, context):
         "headers": {"Content-Type": "application/json"},
         "body": json.dumps({
             "echo": user_message,
-            "info": "b2b-pricing-agent lambda is wired and ready for Bedrock integration"
+            "info": "b2b-pricing-agent lambda is wired and ready"
         })
     }

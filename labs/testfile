@@ -14,9 +14,9 @@ phases:
       # 1. Capture path
       - export APP_PATH=$(pwd)
       
-      # 2. CRITICAL FIX: Clone the missing API model repository one level up
+      # 2. Clone and Prepare Environment
       - echo "Cloning required API models repository..."
-      - cd .. # Go up one directory (to the 'use-cases' folder)
+      - cd .. # CRITICAL: Go up one directory (to the 'use-cases' folder)
       - git clone https://github.com/amzn/selling-partner-api-models.git
       - cd sp-api-mcp-server # Go back to the application directory
 
@@ -25,26 +25,31 @@ phases:
       - echo "Compiling TypeScript to JavaScript..."
       - npm run build
       
-      # 4. Final log to confirm models directory exists before build
-      - echo "--- Checking for cloned API models path: ---"
-      - ls -d ../selling-partner-api-models/ 
-      
-      # 5. GENERATE DOCKERFILE with the model files copy (using single quotes for YAML robustness)
+      # 4. GENERATE DOCKERFILE (using paths relative to the future build context: 'use-cases/')
+      # We put the Dockerfile in the current directory first, then move it.
       - 'echo "FROM public.ecr.aws/docker/library/node:20-alpine" > Dockerfile'
       - 'echo "WORKDIR /app" >> Dockerfile'
-      - 'echo "COPY package*.json ./" >> Dockerfile'
+      
+      # Use relative path from build context (use-cases/) to app's package files
+      - 'echo "COPY sp-api-mcp-server/package*.json /app/" >> Dockerfile'
       - 'echo "RUN npm install --omit=dev" >> Dockerfile'
       
-      # 🚨 COPY FIX: Copy the app's contents and the external models into /app
-      - 'echo "COPY . /app" >> Dockerfile'
-      - 'echo "COPY ../selling-partner-api-models /app/selling-partner-api-models" >> Dockerfile'
+      # 🚨 FINAL COPY FIX: Paths are now relative to the parent directory (use-cases/)
+      - 'echo "COPY sp-api-mcp-server /app" >> Dockerfile'
+      - 'echo "COPY selling-partner-api-models /app/selling-partner-api-models" >> Dockerfile' # THIS WILL NOW WORK
       
-      # 6. Final ENTRYPOINT/CMD for correct execution of the compiled file
+      # 5. Final CMD
       - 'echo "ENTRYPOINT [\"node\"]" >> Dockerfile'
       - 'echo "CMD [\"build/index.js\"]" >> Dockerfile'
+      
+      # 6. CRITICAL FIX: Move Dockerfile and execute build from the correct context
+      - echo "Moving Dockerfile and changing context..."
+      - mv Dockerfile .. # Move Dockerfile up to the 'use-cases' folder
+      - cd .. # Change context to the 'use-cases' folder (the Docker build root)
 
-      - echo Building Docker image...
-      - docker build -t $REPOSITORY_URI:latest .
+      - echo Building Docker image from new context...
+      # Build from the current directory (.), specifying the location of the Dockerfile (-f).
+      - docker build -t $REPOSITORY_URI:latest -f sp-api-mcp-server/Dockerfile .
 
   post_build:
     commands:

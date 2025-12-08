@@ -1,124 +1,109 @@
-<mxfile host="app.diagrams.net" modified="2025-12-04T12:00:00.000Z" agent="5.0" version="20.8.23">
-  <diagram id="AwsMcpSpApiDemo" name="AWS-MCP-SPAPI-Demo">
-    <mxGraphModel dx="1700" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" page="1" pageScale="1" pageWidth="1600" pageHeight="900" math="0" shadow="0">
-      <root>
-        <mxCell id="0"/>
-        <mxCell id="1" parent="0"/>
+// index.mjs - MCP proxy Lambda handler (Node.js 20, ES module)
 
-        <!-- Group: Client & Ingress -->
-        <mxCell id="group_client" value="Client &amp; Ingress" style="swimlane;rounded=1;group=1;strokeColor=#cccccc;fillColor=#f9f9f9;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="40" y="40" width="420" height="200" as="geometry"/>
-        </mxCell>
+import { spawn } from "child_process";
+import path from "path";
+import { fileURLToPath } from "url";
 
-        <!-- Client -->
-        <mxCell id="client" value="Client&#10;(Frontend / Postman / CLI)" style="shape=mxgraph.aws4.user;verticalLabelPosition=bottom;verticalAlign=top;html=1;" vertex="1" parent="group_client">
-          <mxGeometry x="40" y="60" width="80" height="80" as="geometry"/>
-        </mxCell>
+import { Client } from "@modelcontextprotocol/sdk/client";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio";
+import {
+  ListToolsResultSchema,
+  CallToolResultSchema,
+} from "@modelcontextprotocol/sdk/types";
 
-        <!-- API Gateway -->
-        <mxCell id="apiGateway" value="Amazon API Gateway" style="shape=mxgraph.aws4.api_gateway;verticalLabelPosition=bottom;verticalAlign=top;html=1;" vertex="1" parent="group_client">
-          <mxGeometry x="200" y="60" width="80" height="80" as="geometry"/>
-        </mxCell>
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-        <!-- Arrow Client -> API GW -->
-        <mxCell id="edgeClientApi" edge="1" parent="group_client" source="client" target="apiGateway" style="endArrow=classic;strokeColor=#000000;">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
+function parseBody(event) {
+  if (!event || !event.body) return {};
+  try {
+    if (typeof event.body === "string") {
+      return JSON.parse(event.body);
+    }
+    return event.body;
+  } catch {
+    return {};
+  }
+}
 
-        <!-- Group: Agent & MCP Layer -->
-        <mxCell id="group_agent" value="Agent &amp; MCP Tooling Layer" style="swimlane;rounded=1;group=1;strokeColor=#cccccc;fillColor=#ffffff;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="480" y="40" width="720" height="520" as="geometry"/>
-        </mxCell>
+export const handler = async (event) => {
+  const body = parseBody(event);
+  const toolName = body.toolName || "";   // if empty, we'll just list tools
+  const toolArgs = body.arguments || {};
 
-        <!-- Agent Lambda -->
-        <mxCell id="lambdaAgent" value="B2B Pricing Agent Lambda&#10;(Python + Bedrock)" style="shape=mxgraph.aws4.lambda_function;verticalLabelPosition=bottom;verticalAlign=top;html=1;" vertex="1" parent="group_agent">
-          <mxGeometry x="60" y="60" width="80" height="80" as="geometry"/>
-        </mxCell>
+  // Where the vendored MCP server lives inside the Lambda package
+  const serverDir = path.join(__dirname, "sp-api-mcp-server");
 
-        <!-- Arrow API GW -> Agent Lambda -->
-        <mxCell id="edgeApiToAgent" edge="1" parent="1" source="apiGateway" target="lambdaAgent" style="endArrow=classic;strokeColor=#000000;">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
+  // Spawn the Amazon SP-API MCP server (unchanged code)
+  const child = spawn("node", ["build/index.js"], {
+    cwd: serverDir,
+    env: {
+      ...process.env,  // includes SP_API_* and CATALOG_PATH from Lambda env
+    },
+    stdio: "pipe",
+  });
 
-        <!-- Bedrock -->
-        <mxCell id="bedrock" value="Amazon Bedrock&#10;(Claude Sonnet)" style="shape=mxgraph.aws4.bedrock;verticalLabelPosition=bottom;verticalAlign=top;html=1;" vertex="1" parent="group_agent">
-          <mxGeometry x="60" y="210" width="80" height="80" as="geometry"/>
-        </mxCell>
+  // Hook up MCP over stdio
+  const transport = new StdioClientTransport({
+    stdin: child.stdin,
+    stdout: child.stdout,
+  });
 
-        <!-- Arrow Agent -> Bedrock -->
-        <mxCell id="edgeAgentToBedrock" edge="1" parent="group_agent" source="lambdaAgent" target="bedrock" value="LLM reasoning" style="endArrow=classic;strokeColor=#000000;labelBackgroundColor=#ffffff;">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
+  const client = new Client(
+    { name: "sp-api-mcp-proxy", version: "1.0.0" },
+    { capabilities: { tools: {} } }
+  );
 
-        <!-- MCP Proxy Lambda -->
-        <mxCell id="mcpProxy" value="SP-API MCP Proxy Lambda&#10;(Node.js MCP client)" style="shape=mxgraph.aws4.lambda_function;verticalLabelPosition=bottom;verticalAlign=top;html=1;" vertex="1" parent="group_agent">
-          <mxGeometry x="260" y="60" width="80" height="80" as="geometry"/>
-        </mxCell>
+  try {
+    await client.connect(transport);
 
-        <!-- Arrow Agent -> MCP Proxy -->
-        <mxCell id="edgeAgentToMcpProxy" edge="1" parent="group_agent" source="lambdaAgent" target="mcpProxy" value="Tool call / MCP request" style="endArrow=classic;strokeColor=#000000;labelBackgroundColor=#ffffff;">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
+    // 1) List tools from the MCP server
+    const toolsResult = await client.request(
+      { method: "tools/list" },
+      ListToolsResultSchema
+    );
 
-        <!-- MCP Server (child process) -->
-        <mxCell id="mcpServer" value="SP-API MCP Server&#10;(Amazon sample, stdio)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="group_agent">
-          <mxGeometry x="240" y="220" width="220" height="80" as="geometry"/>
-        </mxCell>
+    let toolCallResult = null;
 
-        <!-- Arrow MCP Proxy -> MCP Server -->
-        <mxCell id="edgeProxyToMcpServer" edge="1" parent="group_agent" source="mcpProxy" target="mcpServer" value="spawn() + MCP over stdio" style="endArrow=classic;strokeColor=#000000;labelBackgroundColor=#ffffff;">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
+    // 2) Optionally call a tool if toolName provided
+    if (toolName) {
+      toolCallResult = await client.request(
+        {
+          method: "tools/call",
+          params: {
+            name: toolName,
+            arguments: toolArgs,
+          },
+        },
+        CallToolResultSchema
+      );
+    }
 
-        <!-- Note under MCP server -->
-        <mxCell id="noteMcp" value="MCP client in Lambda talks to this server via stdin/stdout using MCP SDK" style="text;whiteSpace=wrap;html=1;fontSize=11;fontColor=#555555;" vertex="1" parent="group_agent">
-          <mxGeometry x="240" y="305" width="260" height="40" as="geometry"/>
-        </mxCell>
+    await client.close();
+    child.kill();
 
-        <!-- Group: Observability & Security -->
-        <mxCell id="group_obs" value="Security &amp; Observability" style="swimlane;rounded=1;group=1;strokeColor=#cccccc;fillColor=#ffffff;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="1220" y="40" width="280" height="260" as="geometry"/>
-        </mxCell>
-
-        <!-- Secrets Manager -->
-        <mxCell id="secrets" value="AWS Secrets Manager&#10;(SP-API credentials)" style="shape=mxgraph.aws4.secrets_manager;verticalLabelPosition=bottom;verticalAlign=top;html=1;" vertex="1" parent="group_obs">
-          <mxGeometry x="60" y="70" width="80" height="80" as="geometry"/>
-        </mxCell>
-
-        <!-- CloudWatch -->
-        <mxCell id="cloudwatch" value="Amazon CloudWatch&#10;(Lambdas + MCP logs)" style="shape=mxgraph.aws4.cloudwatch;verticalLabelPosition=bottom;verticalAlign=top;html=1;" vertex="1" parent="group_obs">
-          <mxGeometry x="160" y="160" width="80" height="80" as="geometry"/>
-        </mxCell>
-
-        <!-- Arrow Secrets -> MCP Proxy -->
-        <mxCell id="edgeSecretsToProxy" edge="1" parent="1" source="secrets" target="mcpProxy" value="SP-API auth config" style="endArrow=classic;strokeColor=#000000;dashed=1;labelBackgroundColor=#ffffff;">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-
-        <!-- Arrow Lambdas -> CloudWatch -->
-        <mxCell id="edgeAgentToCW" edge="1" parent="1" source="lambdaAgent" target="cloudwatch" style="endArrow=classic;strokeColor=#000000;dashed=1;">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-        <mxCell id="edgeProxyToCW" edge="1" parent="1" source="mcpProxy" target="cloudwatch" style="endArrow=classic;strokeColor=#000000;dashed=1;">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-
-        <!-- Group: SP-API / External -->
-        <mxCell id="group_spapi" value="External SP-API Layer" style="swimlane;rounded=1;group=1;strokeColor=#cccccc;fillColor=#ffffff;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="480" y="580" width="720" height="200" as="geometry"/>
-        </mxCell>
-
-        <!-- SP-API -->
-        <mxCell id="spapi" value="Amazon Selling Partner API&#10;(Amazon Business / B2B: Pricing, Discounts, Sales &amp; Traffic, BHDR)" style="shape=mxgraph.aws4.general;verticalLabelPosition=bottom;verticalAlign=top;html=1;" vertex="1" parent="group_spapi">
-          <mxGeometry x="260" y="60" width="120" height="80" as="geometry"/>
-        </mxCell>
-
-        <!-- Arrow MCP Server -> SP-API -->
-        <mxCell id="edgeMcpServerToSpApi" edge="1" parent="1" source="mcpServer" target="spapi" value="HTTPS (SP-API requests)" style="endArrow=classic;strokeColor=#000000;labelBackgroundColor=#ffffff;">
-          <mxGeometry relative="1" as="geometry"/>
-        </mxCell>
-
-      </root>
-    </mxGraphModel>
-  </diagram>
-</mxfile>
+    return {
+      statusCode: 200,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        {
+          message: "MCP proxy call successful",
+          tools: toolsResult,
+          toolCall: toolCallResult,
+        },
+        null,
+        2
+      ),
+    };
+  } catch (err) {
+    console.error("MCP proxy error:", err);
+    try { child.kill(); } catch {}
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: "MCP proxy failed",
+        details: err?.message || String(err),
+      }),
+    };
+  }
+};

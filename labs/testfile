@@ -1,109 +1,164 @@
-// index.mjs - MCP proxy Lambda handler (Node.js 20, ES module)
+version: 0.2
 
-import { spawn } from "child_process";
-import path from "path";
-import { fileURLToPath } from "url";
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+    commands:
+      - echo "Using Node version:"
+      - node -v
+      - npm -v
 
-import { Client } from "@modelcontextprotocol/sdk/client";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio";
-import {
-  ListToolsResultSchema,
-  CallToolResultSchema,
-} from "@modelcontextprotocol/sdk/types";
+  pre_build:
+    commands:
+      - echo "Cloning Amazon SP-API MCP server and models..."
+      - git clone https://github.com/amzn/selling-partner-api-samples.git
+      - git clone https://github.com/amzn/selling-partner-api-models.git
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+  build:
+    commands:
+      - echo "Building SP-API MCP server..."
+      - cd selling-partner-api-samples/use-cases/sp-api-mcp-server
+      - npm install
+      - npm run build
+      - cd ../../..
 
-function parseBody(event) {
-  if (!event || !event.body) return {};
-  try {
-    if (typeof event.body === "string") {
-      return JSON.parse(event.body);
-    }
-    return event.body;
-  } catch {
-    return {};
-  }
-}
+      - echo "Initializing MCP proxy Lambda project in build workspace..."
+      - npm init -y
+      - npm install @modelcontextprotocol/sdk zod
 
-export const handler = async (event) => {
-  const body = parseBody(event);
-  const toolName = body.toolName || "";   // if empty, we'll just list tools
-  const toolArgs = body.arguments || {};
+      - echo "Creating index.mjs (MCP proxy Lambda handler)..."
+      - |
+        cat << 'EOF' > index.mjs
+        import { spawn } from "child_process";
+        import path from "path";
+        import { fileURLToPath } from "url";
 
-  // Where the vendored MCP server lives inside the Lambda package
-  const serverDir = path.join(__dirname, "sp-api-mcp-server");
+        import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+        import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+        import {
+          ListToolsResultSchema,
+          CallToolResultSchema,
+        } from "@modelcontextprotocol/sdk/types.js";
 
-  // Spawn the Amazon SP-API MCP server (unchanged code)
-  const child = spawn("node", ["build/index.js"], {
-    cwd: serverDir,
-    env: {
-      ...process.env,  // includes SP_API_* and CATALOG_PATH from Lambda env
-    },
-    stdio: "pipe",
-  });
+        const __filename = fileURLToPath(import.meta.url);
+        const __dirname = path.dirname(__filename);
 
-  // Hook up MCP over stdio
-  const transport = new StdioClientTransport({
-    stdin: child.stdin,
-    stdout: child.stdout,
-  });
+        function parseBody(event) {
+          if (!event || !event.body) return {};
+          try {
+            if (typeof event.body === "string") {
+              return JSON.parse(event.body);
+            }
+            return event.body;
+          } catch {
+            return {};
+          }
+        }
 
-  const client = new Client(
-    { name: "sp-api-mcp-proxy", version: "1.0.0" },
-    { capabilities: { tools: {} } }
-  );
+        export const handler = async (event) => {
+          const body = parseBody(event);
+          const toolName = body.toolName || "";
+          const toolArgs = body.arguments || {};
 
-  try {
-    await client.connect(transport);
+          // Vendored MCP server directory in the Lambda package
+          const serverDir = path.join(__dirname, "sp-api-mcp-server");
 
-    // 1) List tools from the MCP server
-    const toolsResult = await client.request(
-      { method: "tools/list" },
-      ListToolsResultSchema
-    );
+          // Spawn the Amazon SP-API MCP server (unchanged code)
+          const child = spawn("node", ["build/index.js"], {
+            cwd: serverDir,
+            env: {
+              ...process.env,  // includes SP_API_* and CATALOG_PATH at runtime
+            },
+            stdio: "pipe",
+          });
 
-    let toolCallResult = null;
+          // Hook up MCP over stdio
+          const transport = new StdioClientTransport({
+            stdin: child.stdin,
+            stdout: child.stdout,
+          });
 
-    // 2) Optionally call a tool if toolName provided
-    if (toolName) {
-      toolCallResult = await client.request(
-        {
-          method: "tools/call",
-          params: {
-            name: toolName,
-            arguments: toolArgs,
-          },
-        },
-        CallToolResultSchema
-      );
-    }
+          const client = new Client(
+            { name: "sp-api-mcp-proxy", version: "1.0.0" },
+            { capabilities: { tools: {} } }
+          );
 
-    await client.close();
-    child.kill();
+          try {
+            await client.connect(transport);
 
-    return {
-      statusCode: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(
-        {
-          message: "MCP proxy call successful",
-          tools: toolsResult,
-          toolCall: toolCallResult,
-        },
-        null,
-        2
-      ),
-    };
-  } catch (err) {
-    console.error("MCP proxy error:", err);
-    try { child.kill(); } catch {}
-    return {
-      statusCode: 500,
-      body: JSON.stringify({
-        error: "MCP proxy failed",
-        details: err?.message || String(err),
-      }),
-    };
-  }
-};
+            // 1) List tools from the MCP server
+            const toolsResult = await client.request(
+              { method: "tools/list" },
+              ListToolsResultSchema
+            );
+
+            let toolCallResult = null;
+
+            // 2) Optionally call a tool if toolName is provided
+            if (toolName) {
+              toolCallResult = await client.request(
+                {
+                  method: "tools/call",
+                  params: {
+                    name: toolName,
+                    arguments: toolArgs,
+                  },
+                },
+                CallToolResultSchema
+              );
+            }
+
+            await client.close();
+            child.kill();
+
+            return {
+              statusCode: 200,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(
+                {
+                  message: "MCP proxy call successful",
+                  tools: toolsResult,
+                  toolCall: toolCallResult,
+                },
+                null,
+                2
+              ),
+            };
+          } catch (err) {
+            console.error("MCP proxy error:", err);
+            try { child.kill(); } catch {}
+            return {
+              statusCode: 500,
+              body: JSON.stringify({
+                error: "MCP proxy failed",
+                details: err?.message || String(err),
+              }),
+            };
+          }
+        };
+        EOF
+
+      - echo "Preparing Lambda package directory..."
+      - mkdir -p lambda_package
+      - cp index.mjs package.json lambda_package/
+      - cp -R node_modules lambda_package/node_modules
+
+      - echo "Vendoring SP-API MCP server into Lambda package..."
+      - mkdir -p lambda_package/sp-api-mcp-server
+      - cp -R selling-partner-api-samples/use-cases/sp-api-mcp-server/build lambda_package/sp-api-mcp-server/build
+      - cp -R selling-partner-api-samples/use-cases/sp-api-mcp-server/node_modules lambda_package/sp-api-mcp-server/node_modules
+
+      - echo "Adding selling-partner-api-models into Lambda package..."
+      - mkdir -p lambda_package/selling-partner-api-models
+      - cp -R selling-partner-api-models/models lambda_package/selling-partner-api-models/models
+
+      - echo "Creating Lambda deployment zip..."
+      - cd lambda_package
+      - zip -r ../mcp-proxy-lambda.zip .
+      - cd ..
+      - ls -lah
+
+artifacts:
+  files:
+    - mcp-proxy-lambda.zip
